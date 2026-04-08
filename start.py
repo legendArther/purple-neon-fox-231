@@ -33,19 +33,30 @@ def get_db_connection():
         # Fallback to sqlite if DATABASE_URL is not set (useful for local dev)
         import sqlite3
         return sqlite3.connect("market_history.db")
+    
+    # Force use of DATABASE_URL if it exists
+    print(f"Connecting to NeonDB: {DATABASE_URL[:20]}...")
     return psycopg2.connect(DATABASE_URL)
 
 def init_db():
+    print("Initializing Database...")
     conn = get_db_connection()
-    c = conn.cursor()
-    if DATABASE_URL:
-        c.execute('''CREATE TABLE IF NOT EXISTS price_history 
-                     (timestamp BIGINT, slug TEXT, up_price REAL, down_price REAL)''')
-    else:
-        c.execute('''CREATE TABLE IF NOT EXISTS price_history 
-                     (timestamp INTEGER, slug TEXT, up_price REAL, down_price REAL)''')
-    conn.commit()
-    conn.close()
+    try:
+        c = conn.cursor()
+        if DATABASE_URL:
+            # Explicitly create the table if it's missing in Neon
+            c.execute('''CREATE TABLE IF NOT EXISTS price_history 
+                         (timestamp BIGINT, slug TEXT, up_price REAL, down_price REAL)''')
+            print("Table price_history verified/created in NeonDB.")
+        else:
+            c.execute('''CREATE TABLE IF NOT EXISTS price_history 
+                         (timestamp INTEGER, slug TEXT, up_price REAL, down_price REAL)''')
+            print("Table price_history verified/created in SQLite.")
+        conn.commit()
+    except Exception as e:
+        print(f"Init DB Error: {e}")
+    finally:
+        conn.close()
 
 def save_price(ts, slug, up, down):
     try:
