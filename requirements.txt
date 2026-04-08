@@ -1,0 +1,9 @@
+eventlet
+Flask
+Flask-SocketIO
+requests
+pytz
+websockets
+asyncio
+gunicorn
+psycopg2-binary
