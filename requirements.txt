@@ -7,3 +7,5 @@ websockets
 asyncio
 gunicorn
 psycopg2-binary
+gevent
+gevent-websocket

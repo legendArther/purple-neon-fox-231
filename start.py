@@ -1,5 +1,8 @@
-import eventlet
-eventlet.monkey_patch()
+try:
+    import gevent.monkey
+    gevent.monkey.patch_all()
+except ImportError:
+    pass
 
 from flask import Flask, render_template_string
 from flask_socketio import SocketIO, emit
@@ -17,7 +20,8 @@ import os
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+# Use gevent for async mode to avoid eventlet/asyncio conflicts
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 POLY_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
