@@ -22,36 +22,43 @@ GAMMA_BASE = "https://gamma-api.polymarket.com"
 POLY_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# --- DB SETUP ---
+# --- GLOBAL STATE ---
+# Shared DB connection pool placeholder
+db_pool = None
+
 def get_db_connection():
     if not DATABASE_URL:
-        # Fallback to sqlite if DATABASE_URL is not set (useful for local dev)
         import sqlite3
         return sqlite3.connect("market_history.db")
     
-    # Force use of DATABASE_URL if it exists
-    print(f"Connecting to NeonDB: {DATABASE_URL[:20]}...")
-    return psycopg2.connect(DATABASE_URL)
+    # Simple singleton-like connection for the worker
+    global db_pool
+    if db_pool is None or db_pool.closed:
+        print(f"Connecting to NeonDB: {DATABASE_URL[:20]}...")
+        db_pool = psycopg2.connect(DATABASE_URL)
+    return db_pool
 
 def init_db():
     print("Initializing Database...")
+    if not DATABASE_URL:
+        conn = sqlite3.connect("market_history.db")
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS price_history 
+                     (timestamp INTEGER, slug TEXT, up_price REAL, down_price REAL)''')
+        conn.commit()
+        conn.close()
+        print("Table price_history verified in SQLite.")
+        return
+
     conn = get_db_connection()
     try:
         c = conn.cursor()
-        if DATABASE_URL:
-            # Explicitly create the table if it's missing in Neon
-            c.execute('''CREATE TABLE IF NOT EXISTS price_history 
-                         (timestamp BIGINT, slug TEXT, up_price REAL, down_price REAL)''')
-            print("Table price_history verified/created in NeonDB.")
-        else:
-            c.execute('''CREATE TABLE IF NOT EXISTS price_history 
-                         (timestamp INTEGER, slug TEXT, up_price REAL, down_price REAL)''')
-            print("Table price_history verified/created in SQLite.")
+        c.execute('''CREATE TABLE IF NOT EXISTS price_history 
+                     (timestamp BIGINT, slug TEXT, up_price REAL, down_price REAL)''')
         conn.commit()
+        print("Table price_history verified in NeonDB.")
     except Exception as e:
         print(f"Init DB Error: {e}")
-    finally:
-        conn.close()
 
 def save_price(ts, slug, up, down):
     try:
@@ -59,9 +66,10 @@ def save_price(ts, slug, up, down):
         c = conn.cursor()
         c.execute("INSERT INTO price_history (timestamp, slug, up_price, down_price) VALUES (%s, %s, %s, %s)" if DATABASE_URL else "INSERT INTO price_history VALUES (?, ?, ?, ?)", (ts, slug, up, down))
         conn.commit()
-        conn.close()
     except Exception as e:
-        print(f"DB Error: {e}")
+        print(f"DB Save Error: {e}")
+        global db_pool
+        db_pool = None # Force reconnect on next try
 
 def get_history(slug):
     try:
@@ -71,9 +79,7 @@ def get_history(slug):
             c.execute("SELECT timestamp, up_price, down_price FROM price_history WHERE slug=%s ORDER BY timestamp ASC", (slug,))
         else:
             c.execute("SELECT timestamp, up_price, down_price FROM price_history WHERE slug=? ORDER BY timestamp ASC", (slug,))
-        rows = c.fetchall()
-        conn.close()
-        return rows
+        return c.fetchall()
     except Exception as e:
         print(f"History Fetch Error: {e}")
         return []
@@ -166,7 +172,9 @@ async def polymarket_ws_handler():
         last_save_time = 0
         
         try:
-            async with websockets.connect(POLY_WS_URL) as ws:
+            # Increase open_timeout to 20s to prevent handshake timeouts on Render
+            async with websockets.connect(POLY_WS_URL, open_timeout=20) as ws:
+                print("WebSocket Connected!")
                 await ws.send(json.dumps({"type": "market", "assets_ids": token_ids}))
                 while True:
                     if get_current_5min_timestamp() != ts_bucket: break
