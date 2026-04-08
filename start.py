@@ -215,11 +215,19 @@ async def polymarket_ws_handler():
             await asyncio.sleep(5)
 
 def start_background_workers():
-    def run_async_loop():
+    def run_worker():
+        # Gevent-friendly way to run the background loop
+        # We use a separate thread for the asyncio loop but ensure gevent is aware
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(polymarket_ws_handler())
-    threading.Thread(target=run_async_loop, daemon=True).start()
+        try:
+            loop.run_until_complete(polymarket_ws_handler())
+        except Exception as e:
+            print(f"Background Worker Error: {e}")
+
+    # Use gevent.spawn instead of threading.Thread for better compatibility with Gunicorn gevent worker
+    import gevent
+    gevent.spawn(run_worker)
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
