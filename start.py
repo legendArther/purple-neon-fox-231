@@ -78,6 +78,8 @@ def get_history(slug):
     conn = get_db_connection()
     if not conn: return []
     try:
+        c = conn.cursor()
+        if DATABASE_URL:
             c.execute("SELECT timestamp, up_price, down_price FROM price_history WHERE slug=%s ORDER BY timestamp ASC", (slug,))
         else:
             c.execute("SELECT timestamp, up_price, down_price FROM price_history WHERE slug=? ORDER BY timestamp ASC", (slug,))
