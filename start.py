@@ -24,58 +24,60 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # --- GLOBAL STATE ---
 # Shared DB connection pool placeholder
-db_pool = None
+db_conn = None
 
 def get_db_connection():
     if not DATABASE_URL:
         import sqlite3
         return sqlite3.connect("market_history.db")
     
-    # Simple singleton-like connection for the worker
-    global db_pool
-    if db_pool is None or db_pool.closed:
-        print(f"Connecting to NeonDB: {DATABASE_URL[:20]}...")
-        db_pool = psycopg2.connect(DATABASE_URL)
-    return db_pool
+    global db_conn
+    try:
+        if db_conn is None or db_conn.closed != 0:
+            print(f"Connecting to NeonDB: {DATABASE_URL[:30]}...")
+            db_conn = psycopg2.connect(DATABASE_URL)
+            db_conn.autocommit = True # Ensure tables are created and data saved immediately
+        return db_conn
+    except Exception as e:
+        print(f"Connection Error: {e}")
+        db_conn = None
+        return None
 
 def init_db():
     print("Initializing Database...")
-    if not DATABASE_URL:
-        conn = sqlite3.connect("market_history.db")
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS price_history 
-                     (timestamp INTEGER, slug TEXT, up_price REAL, down_price REAL)''')
-        conn.commit()
-        conn.close()
-        print("Table price_history verified in SQLite.")
-        return
-
     conn = get_db_connection()
+    if not conn: 
+        print("Failed to connect for init")
+        return
+        
     try:
         c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS price_history 
-                     (timestamp BIGINT, slug TEXT, up_price REAL, down_price REAL)''')
-        conn.commit()
-        print("Table price_history verified in NeonDB.")
+        if DATABASE_URL:
+            c.execute('''CREATE TABLE IF NOT EXISTS price_history 
+                         (timestamp BIGINT, slug TEXT, up_price REAL, down_price REAL)''')
+            print("Table price_history verified in NeonDB.")
+        else:
+            c.execute('''CREATE TABLE IF NOT EXISTS price_history 
+                         (timestamp INTEGER, slug TEXT, up_price REAL, down_price REAL)''')
+            print("Table price_history verified in SQLite.")
     except Exception as e:
         print(f"Init DB Error: {e}")
 
 def save_price(ts, slug, up, down):
+    conn = get_db_connection()
+    if not conn: return
     try:
-        conn = get_db_connection()
         c = conn.cursor()
         c.execute("INSERT INTO price_history (timestamp, slug, up_price, down_price) VALUES (%s, %s, %s, %s)" if DATABASE_URL else "INSERT INTO price_history VALUES (?, ?, ?, ?)", (ts, slug, up, down))
-        conn.commit()
     except Exception as e:
         print(f"DB Save Error: {e}")
-        global db_pool
-        db_pool = None # Force reconnect on next try
+        global db_conn
+        db_conn = None 
 
 def get_history(slug):
+    conn = get_db_connection()
+    if not conn: return []
     try:
-        conn = get_db_connection()
-        c = conn.cursor()
-        if DATABASE_URL:
             c.execute("SELECT timestamp, up_price, down_price FROM price_history WHERE slug=%s ORDER BY timestamp ASC", (slug,))
         else:
             c.execute("SELECT timestamp, up_price, down_price FROM price_history WHERE slug=? ORDER BY timestamp ASC", (slug,))
