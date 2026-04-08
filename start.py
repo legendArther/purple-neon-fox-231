@@ -1,11 +1,3 @@
-try:
-    import gevent.monkey
-    gevent.monkey.patch_all()
-except ImportError:
-    pass
-
-from flask import Flask, render_template_string
-from flask_socketio import SocketIO, emit
 import requests
 import json
 import time
@@ -18,10 +10,13 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
 
+from flask import Flask, render_template_string
+from flask_socketio import SocketIO, emit
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
-# Use gevent for async mode to avoid eventlet/asyncio conflicts
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+# Use threading for async mode to avoid conflicts with asyncio loop
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 POLY_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -226,19 +221,23 @@ async def polymarket_ws_handler():
             await asyncio.sleep(5)
 
 def start_background_workers():
+    print("Starting background workers...")
     def run_worker():
-        # Gevent-friendly way to run the background loop
-        # We use a separate thread for the asyncio loop but ensure gevent is aware
+        # Clean isolation for the async loop
+        print("Background worker thread started.")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(polymarket_ws_handler())
         except Exception as e:
-            print(f"Background Worker Error: {e}")
+            print(f"Background Worker Fatal Error: {e}")
+        finally:
+            loop.close()
 
-    # Use gevent.spawn instead of threading.Thread for better compatibility with Gunicorn gevent worker
-    import gevent
-    gevent.spawn(run_worker)
+    # Use a real thread for the asyncio loop to keep it away from gevent's main loop
+    import threading
+    t = threading.Thread(target=run_worker, daemon=True)
+    t.start()
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
